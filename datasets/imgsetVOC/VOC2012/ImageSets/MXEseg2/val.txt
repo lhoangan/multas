@@ -1,0 +1,1 @@
+../MXEseg/val.txt

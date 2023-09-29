@@ -1,0 +1,7 @@
+.*.sw*
+*.pyc
+weights/*
+__pycache__/*
+!datasets/
+datasets/*
+!datasets/imgsetVOC
