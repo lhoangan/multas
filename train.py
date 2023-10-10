@@ -124,7 +124,7 @@ def save_weights(model, args, suffixe=""):
         open(os.environ['WANDB_EXP'], 'w').write(save_path)
     return save_path
 
-def test_model(args, model, priors, valid_sets, all_thresh=True):
+def test_model(args, model, priors, valid_sets, all_thresh=True, per_class=False):
     logger.info('Evaluating...')
     model.eval()
     num_images = len(valid_sets)
@@ -180,9 +180,10 @@ def test_model(args, model, priors, valid_sets, all_thresh=True):
             #                    color=(255, 0, 0))
         # Image.fromarray(myimg).save(f'vis_debug_{i:03d}.png')
 
-    return valid_sets.evaluate_detections(all_boxes, all_thresh=all_thresh) * 100
+    return valid_sets.evaluate_detections(all_boxes, all_thresh=all_thresh,
+                                          per_class=per_class) * 100
 
-def test_segmentation(model, testset, all_thresh=True):
+def test_segmentation(model, testset, all_thresh=True, per_class=False):
     logger.info('Evaluating segmentation...')
     model.eval()
     # model.backbone.apply(deactivate_batchnorm)
@@ -206,7 +207,7 @@ def test_segmentation(model, testset, all_thresh=True):
     logger.info (f"Total: {num_images} | Len of preds: {preds.shape[0]}")
 
     # breakpoint()
-    res = testset.evaluate_segmentation(preds, gts)
+    res = testset.evaluate_segmentation(preds, gts, per_class=per_class)
 
     for k in sorted(res.keys()):
         if len(k) < 7:
@@ -412,10 +413,6 @@ if __name__ == '__main__':
             model.train()
 
             if args.eval_epoch and epoch > args.eval_epoch:
-                path = save_weights(ema_model.ema, args, f'ep{epoch-1}_'+
-                    '_'.join([f'{k}{precision[k]:.2f}' for k in sorted(precision.keys())])
-                    )
-
                 priors = PriorBox(args.base_anchor_size, args.size, base_size=args.size).cuda()
                 # precision["det"] = test_model(args, ema_model.ema, priors.clone().detach(),
                 #                               valid_sets['det']) if 'det' in valid_sets else 0
@@ -604,7 +601,7 @@ if __name__ == '__main__':
     #         valid_sets['det'], all_thresh=True) if 'det' in valid_sets else 0
     # precision = test_segmentation(ema_model.ema, valid_sets['seg']) \
     #         if 'seg' in valid_sets else 0
-    print({k: test_model(args, ema_model.ema, priors.clone().detach(), valid_sets[k])
-                for k in valid_sets if 'det' in k})
-    print({k: test_segmentation(ema_model.ema, valid_sets[k])
+    print({k: test_model(args, ema_model.ema, priors.clone().detach(),
+            valid_sets[k], per_class=True) for k in valid_sets if 'det' in k})
+    print({k: test_segmentation(ema_model.ema, valid_sets[k], per_class=True)
                 for k in valid_sets if 'seg' in k})

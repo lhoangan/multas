@@ -313,28 +313,36 @@ class VOCDetection(data.Dataset):
     def evaluate_detections(
         self,
         all_boxes: list,
-        all_thresh=True
+        all_thresh=True,
+        per_class=False
     ) -> float:
         output_dir = os.path.join(self.root, 'eval')
         os.makedirs(output_dir, exist_ok=True)
         self._write_voc_results_file(all_boxes)
         # self._write_coco_bbox_results_file(all_boxes)
         results = []
+        results_ = {}
         if all_thresh:
-            for thresh in np.arange(0.5,1,0.05):
-                result = self._do_python_eval(output_dir, thresh)
-                results.append(result)
-                print('----AP@iou{:.2f} = {:.3f}'.format(thresh, result*100))
-
-            print('mAP results: AP@50={:.3f}, AP@75={:.3f}, AP={:.3f}'.format(
-                results[0] * 100, results[5]*100, sum(results)/10*100))
-            return sum(results)/10
+            range = np.arange(0.5,1,0.05)
         else:
-            thresh = 0.5
-            result = self._do_python_eval(output_dir, thresh)
-            print('----thresh={:.2f}, AP={:.3f}'.format(thresh, result*100))
-            return result
+            range = [.5]
 
+        for thresh in range:
+            result_ = self._do_python_eval(output_dir, thresh)
+            result = np.mean(list(result_.values()))
+            results_ = result_ if len(results)==0 else {
+                                k:results_[k]+result_[k] for k in result_}
+            results.append(result)
+            print('----AP@iou{:.2f} = {:.3f}'.format(thresh, result*100))
+
+        if per_class:
+            [print(f"{cl: <13}{results_[cl]/len(range):.3f}") for cl in results_]
+
+        print(f'mAP results: \t AP@50={results[0]*100:.3f}')
+        if len(results) > 5:
+            print(f'mAP results: \t AP@75={results[5]*100:.3f}, '
+                    f'AP={sum(results)/len(range)*100:.3f}')
+        return sum(results)/len(range)
 
     def _get_voc_results_file_template(
         self,
@@ -435,7 +443,7 @@ class VOCDetection(data.Dataset):
                                 self.imgset,
                                 name+'.txt')
         cachedir = os.path.join(self.root, 'annotations_cache', self.now)
-        aps = []
+        aps = {}
         # The PASCAL VOC metric changed in 2010
         use_07_metric = True if int(self._year) < 2010 else False
         # print('VOC07 metric? ' + ('Yes' if use_07_metric else 'No'))
@@ -449,13 +457,13 @@ class VOCDetection(data.Dataset):
             filename = self._get_voc_results_file_template().format(cls)
             rec, prec, ap = voc_eval(filename, annopath, imagesetfile, cls,
                     cachedir, ovthresh=thresh, use_07_metric=use_07_metric)
-            aps += [ap]
+            aps[cls] = ap
             # UNCOMMENT to print per-class evaluation
             # print('AP for {} = {:.4f}'.format(cls, ap))
             if output_dir is not None:
                 with open(os.path.join(output_dir, cls + '_pr.pkl'), 'wb') as f:
                     pickle.dump({'rec': rec, 'prec': prec, 'ap': ap}, f)
-        return np.mean(aps)
+        return aps #np.mean(aps)
 
     def evaluate_perimg(
         self,
@@ -596,7 +604,7 @@ class VOCDetection(data.Dataset):
             outputs['ovd'].append(ovd)
         return np.mean(aps), outputs
 
-    def evaluate_segmentation(self, preds, gts):
+    def evaluate_segmentation(self, preds, gts, per_class=False):
         """
         Args:
             preds: list of 2D numpy arrays or 3D logits (class dimension = 0)
@@ -628,10 +636,10 @@ class VOCDetection(data.Dataset):
                     minlength=self._conf_matrix.size,
                 ).reshape(self._conf_matrix.shape)
 
-        return self.evaluate_conf_matrix()
+        return self.evaluate_conf_matrix(per_class)
 
 
-    def evaluate_conf_matrix(self):
+    def evaluate_conf_matrix(self, per_class=False):
         """
         https://github.com/facebookresearch/detectron2/blob/96c752ce821a3340e27edd51c28a00665dd32a30/detectron2/evaluation/sem_seg_evaluation.py
 
@@ -687,7 +695,8 @@ class VOCDetection(data.Dataset):
         for i, name in enumerate(self.class_names):
             res[f"ACC-{name}"] = 100 * acc[i]
             # UNCOMMENT to print per-class evaluation
-            # print (f"Class {name}: {100 * acc[i]}%")
+            if per_class:
+                print (f"Class {name}: {100 * acc[i]}%")
 
         # # TODO: logistics, skipped for now
         # if self._output_dir:
