@@ -4,13 +4,6 @@ import torch.nn as nn
 from .teacher_detector import Detector_base
 from .teacher_detector import multibox, projection
 
-class ScaleExp(nn.Module):
-    def __init__(self,init_value=1.0):
-        super(ScaleExp,self).__init__()
-        self.scale = nn.Parameter(torch.tensor([init_value], dtype=torch.float32))
-    def forward(self,x):
-        return torch.exp(x * self.scale)
-
 class FCOS_Detector(Detector_base):
 
     def __init__(
@@ -54,24 +47,10 @@ class FCOS_Detector(Detector_base):
         self.center_head = nn.Conv2d(self.fea_channel, 1, 1)
         torch.nn.init.normal_(self.center_head.weight, std=0.01)
         torch.nn.init.constant_(self.center_head.bias, 0)
-        self.scale_exp = nn.ModuleList([ScaleExp(1.0) for _ in range(self.fpn_level)])
 
     def init_det(self):
         self.num_anchors = 1
-
-        (self.loc, self.conf) = multibox(self.fpn_level, self.num_anchors,
-                                         self.num_classes['det'],
-                                         self.fea_channel, self.conv_block,
-        )
-        bias_value = 0
-        for modules in self.loc:
-            torch.nn.init.normal_(modules[-1].weight, std=0.01)
-            torch.nn.init.constant_(modules[-1].bias, bias_value)
-        prior_prob = 0.01
-        bias_value = -math.log((1 - prior_prob) / prior_prob)
-        for modules in self.conf:
-            torch.nn.init.normal_(modules[-1].weight, std=0.01)
-            torch.nn.init.constant_(modules[-1].bias, bias_value)
+        super(FCOS_Detector, self).init_det()
 
     def forward_test(self, x, task=""):
 
@@ -106,24 +85,23 @@ class FCOS_Detector(Detector_base):
             results['seg'] = self.seghead(fp, base_size)#, extra=[x2, x1])
 
         if 'det' in self.task and ('det' in task or task == ""):
-            for (x, l, c, lp, cp, mp) in zip(fp,self.loc,       self.conf,
+            for (x, l, c, _, cp, mp) in zip(fp, self.loc,       self.conf,
                                                 self.loc_projs, self.conf_projs,
                                                 self.comb_projs):
-                b, _, w, h = x.size()
-
                 xloc = l[:-1](x)
+                xconf = c[:-1](x)
+
                 # loc.append(se(reshape(l[-1](xloc), 4)))
                 loc.append(reshape(l[-1](xloc), 4))
+                conf.append(reshape(c[-1](xconf), self.num_classes['det']))
+
                 # if self.fcos == "loc":
                 cnter.append(reshape(self.center_head(xloc), 1))
                 # elif self.fcos == "conf":
-                #     cnter.append(reshape(self.center_head(xconf), 1))
+                # cnter.append(reshape(self.center_head(xconf), 1))
 
-                xconf = c[:-1](x)
-                conf.append(reshape(c[-1](xconf), self.num_classes['det']))
                 pconf = cp(xconf)
                 pcomb = mp(torch.concat((xloc, xconf), dim=1))
-
 
                 if self.contr_comb:
                     feat_comb.append(reshape(pcomb, pcomb.size(1)))

@@ -1,7 +1,5 @@
-import os, os.path as osp
-import sys
+import os
 
-import argparse
 import random
 import numpy as np
 import torch
@@ -41,23 +39,25 @@ def PriorBox(
             cx = (j + 0.5) / f_w * size
 
             anchor = base_anchor * 2 ** k # / size
-            output += [cx - anchor, cy - anchor, cx + anchor, cy + anchor]
+            output += [cx, cy, anchor, anchor]
 
     output = torch.Tensor(output).view(-1, 4)
     # output.clamp_(max=1, min=0)
-    output.clamp_(max=size, min=0)
+    # output.clamp_(max=size, min=0)
     return output
 
 def Detect(
     predictions: torch.Tensor,
     prior: torch.Tensor,
-    scale: torch.Tensor,
+    org_size: torch.Tensor,
     eval_thresh: float = 0.01,
     nms_thresh: float = 0.5,
 ) -> tuple:
     """ Detect layer at test time """
 
     from torchvision.ops import boxes as box_ops
+
+    num_anchors_per_level = [x.size(1) for x in predictions['loc']]
 
     loc = torch.cat(predictions['loc'], dim=1)
     conf = torch.cat(predictions['conf'], dim=1)
@@ -93,8 +93,38 @@ def Detect(
     anchor_idxs, classes_idxs = topk_idxs.unbind(dim=1)
 
     from utils.loss.fcos_loss import Box2BoxTransformLinear
-    transform = Box2BoxTransformLinear(normalize_by_size=True)
-    decoded_boxes = transform.apply_deltas(loc[anchor_idxs], prior[anchor_idxs])
+    transform = Box2BoxTransformLinear(normalize_by_size=False)
+    decoded_boxes = transform.apply_deltas(loc, prior, num_anchors_per_level)[anchor_idxs]
+
+    # from torch.nn import functional as F
+    # deltas = F.relu(loc)
+    # boxes = prior.to(deltas.dtype)
+
+    # ctr_x = boxes[:, 0]
+    # ctr_y = boxes[:, 1]
+    # anchor_sizes = boxes[:, 2].clone().unsqueeze(-1) # (R, )
+
+    # k = 0
+    # scale = [8, 16, 32, 64] if len(num_anchors_per_level)==4 else [8, 16, 32, 64, 128]
+    # for num, s in zip(num_anchors_per_level, scale):
+    #     anchor_sizes[k: k+num] = s
+    #     k = k+num
+
+    # # deltas = deltas * anchor_sizes.unsqueeze(-1)
+
+    # l = deltas[:, 0::4] * anchor_sizes / 320 * org_size[0]
+    # t = deltas[:, 1::4] * anchor_sizes / 320 * org_size[1]
+    # r = deltas[:, 2::4] * anchor_sizes / 320 * org_size[2]
+    # b = deltas[:, 3::4] * anchor_sizes / 320 * org_size[3]
+
+    # pred_boxes = torch.zeros_like(deltas)
+
+    # pred_boxes[:, 0::4] = ctr_x[:, None] - l  # x1
+    # pred_boxes[:, 1::4] = ctr_y[:, None] - t  # y1
+    # pred_boxes[:, 2::4] = ctr_x[:, None] + r  # x2
+    # pred_boxes[:, 3::4] = ctr_y[:, None] + b  # y2
+
+    # decoded_boxes = pred_boxes[anchor_idxs]
 
     # Note: Torchvision already has a strategy
     # (see https://github.com/pytorch/vision/issues/1311)
@@ -107,7 +137,7 @@ def Detect(
                                classes_idxs,
                                iou_threshold=test_nms_thresh)
 
-    decoded_boxes=decoded_boxes[keep[: max_detection_per_image]].cpu().numpy()
+    decoded_boxes=(decoded_boxes[keep[: max_detection_per_image]]).cpu().numpy()
     conf_scores = pred_scores[keep[: max_detection_per_image]].cpu()
     classes_idxs = classes_idxs[keep[: max_detection_per_image]].cpu()
 
@@ -139,11 +169,12 @@ def test_model(args, model, priors, valid_sets, all_thresh=True, per_class=False
         with torch.no_grad():
             out = model.forward_test(x)
 
-        priors_ = priors / args.size * scale
+        priors_ = priors # /args.size * scale
 
         (boxes, scores) = Detect(
                 out, priors_, scale, eval_thresh=0.05, nms_thresh=0.5,
         )
+        boxes = boxes / args.size * scale.cpu().numpy()
         # from data.voc0712 import visualize_bbox
         # from PIL import Image
         # # std = (.229, .224, .225)
@@ -214,9 +245,9 @@ if __name__ == '__main__':
         priors = PriorBox(args.base_anchor_size, args.size,
                           base_size=args.size).cuda()
         print({k: test_model(args, model, priors.clone().detach(), valid_sets[k])
-                for k in valid_sets if 'det' in k})
+                for k in valid_sets if 'det' in k and args.task_weights['det'] > 0})
         print({k: test_segmentation(model, valid_sets[k])
-                for k in valid_sets if 'seg' in k})
+                for k in valid_sets if 'seg' in k and args.task_weights['seg'] > 0})
 
     logger.info('Loading teacher Network...')
 
@@ -258,7 +289,7 @@ if __name__ == '__main__':
         if iteration % epoch_size == 0:
 
             log_info = {"Loss/loc": [], "Loss/conf": [], "Loss/contrast": [],
-                    "Loss/seg": [], "Loss": [], "LR": [],
+                    "Loss/seg": [], "Loss/cnt": [], "Loss": [], "LR": [],
                 }
 
             epoch += 1
@@ -285,9 +316,9 @@ if __name__ == '__main__':
                 # logger.info('seg mAP={}'.format(precision['seg']))
                 precision.update(
                     {k: test_model(args, ema_model.ema, priors.clone().detach(), valid_sets[k])
-                            for k in valid_sets if 'det' in k})
+                            for k in valid_sets if 'det' in k and args.task_weights['det'] > 0})
                 precision.update({k: test_segmentation(ema_model.ema, valid_sets[k])
-                            for k in valid_sets if 'seg' in k})
+                            for k in valid_sets if 'seg' in k and args.task_weights['seg'] > 0})
                 [logger.info(f"{k} mAP={precision[k]:.2f}") for k in precision]
 
                 if val(precision) > val(best_maps) + 7e-2:
@@ -376,6 +407,7 @@ if __name__ == '__main__':
         log_info["Loss/loc"].append(results['loss_l'].item() if 'loss_l' in results else 0)
         log_info["Loss/conf"].append(results['loss_c'].item() if 'loss_c'in results else 0)
         log_info["Loss/seg"].append(results['loss_s'].item() if 'loss_s' in results else 0)
+        log_info["Loss/cnt"].append(results['loss_n'].item() if 'loss_n' in results else 0)
         log_info["Loss"].append(loss.item())
         log_info["LR"].append(optimizer.param_groups[0]['lr'])
         wandb.log({k: np.average(log_info[k]) for k in log_info}, step=epoch)
@@ -429,9 +461,9 @@ if __name__ == '__main__':
     # logger.info('seg mAP={}'.format(precision['seg']))
     precision.update(
         {k: test_model(args, ema_model.ema, priors.clone().detach(), valid_sets[k])
-                for k in valid_sets if 'det' in k})
+                for k in valid_sets if 'det' in k and args.task_weights['det'] > 0})
     precision.update({k: test_segmentation(ema_model.ema, valid_sets[k])
-                for k in valid_sets if 'seg' in k})
+                for k in valid_sets if 'seg' in k and args.task_weights['seg'] > 0})
     [logger.info(f"{k} mAP={precision[k]:.2f}") for k in precision]
 
     if val(precision) > val(best_maps) + 7e-2 or len(mAPs) == 0:
@@ -470,7 +502,7 @@ if __name__ == '__main__':
     #         valid_sets['det'], all_thresh=True) if 'det' in valid_sets else 0
     # precision = test_segmentation(ema_model.ema, valid_sets['seg']) \
     #         if 'seg' in valid_sets else 0
-    print({k: test_model(args, ema_model.ema, priors.clone().detach(),
-            valid_sets[k], per_class=True) for k in valid_sets if 'det' in k})
+    print({k: test_model(args, ema_model.ema, priors.clone().detach(), valid_sets[k],
+            per_class=True) for k in valid_sets if 'det' in k and args.task_weights['det'] > 0})
     print({k: test_segmentation(ema_model.ema, valid_sets[k], per_class=True)
-                for k in valid_sets if 'seg' in k})
+            for k in valid_sets if 'seg' in k and args.task_weights['seg']> 0})

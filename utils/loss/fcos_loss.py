@@ -31,7 +31,7 @@ class FCOSLoss(nn.Module):
 
         self.focal_loss_alpha = focal_loss_alpha
         self.focal_loss_gamma = focal_loss_gamma
-        self.box2box_transform = Box2BoxTransformLinear(normalize_by_size=True)
+        self.box2box_transform = Box2BoxTransformLinear(normalize_by_size=False)
 
     def forward(
         self,
@@ -62,7 +62,6 @@ class FCOSLoss(nn.Module):
             :, :, :-1
         ]  # no loss for the last (background) class
 
-        # breakpoint()
         loss_cls = sigmoid_focal_loss_jit(
             pred_logits,
             gt_labels_target,
@@ -76,6 +75,7 @@ class FCOSLoss(nn.Module):
             pred_anchor_deltas,
             gt_boxes,
             pos_mask,
+            self.num_anchors_per_level,
             box_reg_loss_type="giou",
         )
 
@@ -160,13 +160,20 @@ class FCOSLoss(nn.Module):
             return (boxes[:, 2]-boxes[:, 0])*(boxes[:, 3]-boxes[:, 1])
 
         # anchors = Boxes.cat(anchors)  # (R, 4)
-        # breakpoint()
-        anchor_centers = get_centers(anchors)  # (R, 2)
-        anchor_sizes = anchors[:, 2] - anchors[:, 0]  # (R, )
+        # anchor_centers = get_centers(anchors)  # (R, 2)
+        anchor_centers = anchors[:, :2].clone() # (R, 2)
+        # anchor_sizes = anchors[:, 2] - anchors[:, 0]  # (R, )
+        anchor_sizes = anchors[:, 2].clone() # (R, )
 
-        lower_bound = anchor_sizes * 4
+        k = 0
+        scale = [8, 16, 32, 64] if len(self.num_anchors_per_level)==4 else [8, 16, 32, 64, 128]
+        for num, s in zip(self.num_anchors_per_level, scale):
+            anchor_sizes[k: k+num] = s
+            k = k+num
+
+        lower_bound = anchor_sizes * 4 # / 320
         lower_bound[: self.num_anchors_per_level[0]] = 0
-        upper_bound = anchor_sizes * 8
+        upper_bound = anchor_sizes * 8 # / 320
         upper_bound[-self.num_anchors_per_level[-1] :] = float("inf")
 
         gt_centers = get_centers(gt_boxes)
@@ -174,6 +181,7 @@ class FCOSLoss(nn.Module):
         # FCOS with center sampling: anchor point must be close enough to
         # ground-truth box center.
         center_dists = (anchor_centers[None, :, :] - gt_centers[:, None, :]).abs_()
+        # sampling_regions = center_sampling_radius * 1 / anchor_sizes[None, :]
         sampling_regions = center_sampling_radius * anchor_sizes[None, :]
 
         match_quality_matrix = center_dists.max(dim=2).values < sampling_regions
@@ -198,7 +206,6 @@ class FCOSLoss(nn.Module):
         return match_quality_matrix  # (M, R)
 
     def compute_ctrness_targets(self, anchors, gt_boxes):
-        # anchors = Boxes.cat(anchors).tensor  # Rx4
         reg_targets = [self.box2box_transform.get_deltas(anchors, m) for m in gt_boxes]
         reg_targets = torch.stack(reg_targets, dim=0)  # NxRx4
         if len(reg_targets) == 0:
@@ -239,8 +246,10 @@ class Box2BoxTransformLinear:
         assert isinstance(src_boxes, torch.Tensor), type(src_boxes)
         assert isinstance(target_boxes, torch.Tensor), type(target_boxes)
 
-        src_ctr_x = 0.5 * (src_boxes[:, 0] + src_boxes[:, 2])
-        src_ctr_y = 0.5 * (src_boxes[:, 1] + src_boxes[:, 3])
+        # src_ctr_x = 0.5 * (src_boxes[:, 0] + src_boxes[:, 2])
+        # src_ctr_y = 0.5 * (src_boxes[:, 1] + src_boxes[:, 3])
+        src_ctr_x = src_boxes[:, 0]
+        src_ctr_y = src_boxes[:, 1]
 
         target_l = src_ctr_x - target_boxes[:, 0]
         target_t = src_ctr_y - target_boxes[:, 1]
@@ -256,7 +265,7 @@ class Box2BoxTransformLinear:
 
         return deltas
 
-    def apply_deltas(self, deltas, boxes):
+    def apply_deltas(self, deltas, boxes, num_anchors_per_level):
         """
         Apply transformation `deltas` (dx1, dy1, dx2, dy2) to `boxes`.
 
@@ -270,9 +279,22 @@ class Box2BoxTransformLinear:
         deltas = F.relu(deltas)
         boxes = boxes.to(deltas.dtype)
 
-        ctr_x = 0.5 * (boxes[:, 0] + boxes[:, 2])
-        ctr_y = 0.5 * (boxes[:, 1] + boxes[:, 3])
-        if self.normalize_by_size:
+        # ctr_x = 0.5 * (boxes[:, 0] + boxes[:, 2])
+        # ctr_y = 0.5 * (boxes[:, 1] + boxes[:, 3])
+        ctr_x = boxes[:, 0]
+        ctr_y = boxes[:, 1]
+
+        anchor_sizes = boxes[:, 2].clone() # (R, )
+
+        k = 0
+        scale = [8, 16, 32, 64] if len(num_anchors_per_level)==4 else [8, 16, 32, 64, 128]
+        for num, s in zip(num_anchors_per_level, scale):
+            anchor_sizes[k: k+num] = s
+            k = k+num
+
+        deltas = deltas * anchor_sizes.unsqueeze(-1)
+
+        if False: # self.normalize_by_size:
             stride_w = boxes[:, 2] - boxes[:, 0]
             stride_h = boxes[:, 3] - boxes[:, 1]
             strides = torch.stack([stride_w, stride_h, stride_w, stride_h], axis=1)
@@ -297,6 +319,7 @@ def _dense_box_regression_loss(
     pred_anchor_deltas,
     gt_boxes,
     fg_mask,
+    num_anchors_per_level,
     box_reg_loss_type="smooth_l1",
     smooth_l1_beta=0.0,
 ):
@@ -325,8 +348,9 @@ def _dense_box_regression_loss(
             reduction="sum",
         )
     elif box_reg_loss_type == "giou":
+        # breakpoint()
         pred_boxes = [
-            box2box_transform.apply_deltas(k, anchors) for k in pred_anchor_deltas
+            box2box_transform.apply_deltas(k, anchors, num_anchors_per_level) for k in pred_anchor_deltas
         ]
         loss_box_reg = giou_loss(
             torch.stack(pred_boxes)[fg_mask], torch.stack(gt_boxes)[fg_mask], reduction="sum"
