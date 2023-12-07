@@ -29,7 +29,7 @@ class SegLoss(nn.Module):
         if seg_data is not None and seggt is not None:
             result['loss_seg'] = self.ce_loss(
                 seg_data,
-                seggt.long().squeeze())
+                seggt.long().squeeze(1))
         else:
             return None
 

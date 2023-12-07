@@ -65,9 +65,9 @@ def Detect(
     assert loc.size(0) == 1,  'ERROR: Batch size = {} during evaluation'.format(loc.size(0))
     (loc, conf, cnter) = loc.squeeze(0), conf.squeeze(0), cnter.squeeze(0)
 
-    test_score_thresh = .2
+    test_score_thresh = eval_thresh # .2
     test_topk_candidates = 1000
-    test_nms_thresh = .6
+    test_nms_thresh = nms_thresh # .6
     max_detection_per_image = 100
 
     # Eq4 in https://arxiv.org/pdf/2006.09214.pdf
@@ -314,6 +314,7 @@ if __name__ == '__main__':
                 # precision["seg"] = test_segmentation(ema_model.ema, valid_sets['seg']) \
                 #         if 'seg' in valid_sets else 0
                 # logger.info('seg mAP={}'.format(precision['seg']))
+                path = save_weights(ema_model.ema, args, '')
                 precision.update(
                     {k: test_model(args, ema_model.ema, priors.clone().detach(), valid_sets[k])
                             for k in valid_sets if 'det' in k and args.task_weights['det'] > 0})
@@ -322,13 +323,13 @@ if __name__ == '__main__':
                 [logger.info(f"{k} mAP={precision[k]:.2f}") for k in precision]
 
                 if val(precision) > val(best_maps) + 7e-2:
-                    # path = save_weights(ema_model.ema, args,
-                    #         'ep{}_mAPd{:.4f}_mAPs{:.4f}'.format(epoch-1,
-                    #             precision['det'], precision['seg']))
+                    # # path = save_weights(ema_model.ema, args,
+                    # #         'ep{}_mAPd{:.4f}_mAPs{:.4f}'.format(epoch-1,
+                    # #             precision['det'], precision['seg']))
                     path = save_weights(ema_model.ema, args, f'ep{epoch-1}_'+
                         '_'.join([f'{k}{precision[k]:.2f}' for k in sorted(precision.keys())])
                         )
-                            # 'ep{}_mAPd{:.4f}_mAPs{:.4f}'.format(epoch-1,
+                          # 'ep{}_mAPd{:.4f}_mAPs{:.4f}'.format(epoch-1,
                     # Update best precision
                     mAPs[path] = val(precision)
                     best_maps = precision.copy()

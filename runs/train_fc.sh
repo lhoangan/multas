@@ -12,7 +12,7 @@
 #SBATCH --exclude=sn[2-7]#,sw1
 #SBATCH --gres gpu:1
 #SBATCH --cpus-per-task=9
-#SBATCH --mail-type=BEGIN,FAIL,END
+#SBATCH --mail-type=FAIL,END
 #SBATCH --mem-per-cpu=3G
 
 # Spécification de la version CUDA
