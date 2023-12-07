@@ -128,6 +128,7 @@ class VOCDetection(data.Dataset):
         ignore_label: int = 255,
         is_training: bool = False,
         task: str="det",
+        both_task: bool=False,
     ) -> None:
         self.root = os.path.join('datasets/', 'VOCdevkit/')
         self.results_file_prefix = dt.now().strftime("%Y%m%d_%H%M%S.%f")
@@ -135,7 +136,8 @@ class VOCDetection(data.Dataset):
         self.image_set = image_sets
         self.imgset = imgset
         self.size = size
-        self.task = task
+        self.both_task = both_task
+        self.task = task if not both_task else "det+seg"
         self.ignore_label = ignore_label
         self.is_training = is_training
         self.double_aug = double_aug
@@ -173,15 +175,20 @@ class VOCDetection(data.Dataset):
     ) -> list:
         data = dict()
         data['image'] = self.pull_image(index, resize=True)
-        if 'det' in self.task: # == 'det':
+        if 'det' in self.task and 'seg' not in self.task: # == 'det':
             data['bboxes'] = self.pull_anno(index)
         if 'seg' in self.task: # == 'seg': # TODO: elif or if?
             data['bboxes'] = self.pull_anno(index)
-            data['mask'] = self.pull_segment(index, resize=True)
+            mask = self.pull_segment(index, resize=True)
+            if mask is not None:
+                data['mask'] = mask
+            else:
+                # if it's a single-task dataset, raise Exception
+                assert self.task!="seg", "Loading seg failed! File not exists!"
 
         if self.is_training:
-            data1 = preproc_for_train_(data, self.size)
-            data2 = preproc_for_train_(data, self.size)
+            data1 = preproc_for_train_(data, self.size, ignored_class=self.ignore_label)
+            data2 = preproc_for_train_(data, self.size, ignored_class=self.ignore_label)
             data = data1
         data = preproc_for_test_(data, self.size)
         if self.double_aug and self.is_training:
@@ -206,7 +213,10 @@ class VOCDetection(data.Dataset):
         resize: bool = False,
     ) -> np.ndarray:
         img_id = self.ids[index]
-        image = Image.open(self._seggtpath % img_id)
+        if not osp.exists(self._seggtpath % img_id):
+            image = Image.fromarray(np.zeros((self.size, self.size)) + self.ignore_label)
+        else:
+            image = Image.open(self._seggtpath % img_id)
         if resize:
             image = image.resize((self.size, self.size), resample=Image.NEAREST)
         image = np.array(image)
@@ -610,6 +620,17 @@ class VOCDetection(data.Dataset):
             preds: list of 2D numpy arrays or 3D logits (class dimension = 0)
             gts: list of 2D numpy arrays
         """
+
+        # reshape back to GT size
+        all_segs = []
+        all_gts = []
+        for i, pred in enumerate(preds):
+            gt = self.pull_segment(i, resize=False)
+            all_gts.append(gt)
+            # breakpoint()
+            all_segs.append(np.array(Image.fromarray(pred.astype(np.uint8)).resize(
+                    (gt.shape[1], gt.shape[0]), resample=Image.NEAREST)))
+
         self._conf_matrix = np.zeros((self.num_classes+1, self.num_classes+1),
                 dtype=np.int64)
         self._b_conf_matrix = np.zeros((self.num_classes+1, self.num_classes+1),

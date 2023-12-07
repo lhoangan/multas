@@ -48,6 +48,7 @@ def parse_arguments():
     parser.add_argument('--dataset', default='VOC',
                         choices=["VOC",  "VOCaug", "MXE", "ISPRS", "COCO", "MXS",
                                 "Cityscapes", "MXE+Cityscapes", "MXE+MXS",
+                                 "MXE+MXT",
                                  ])
     parser.add_argument('--imgset', default='Main',
             choices=["Main", "Segmentation",            # VOC imgset
@@ -167,18 +168,20 @@ def test_model(args, model, priors, valid_sets, all_thresh=True, per_class=False
                 all_boxes[j][i] = np.hstack(
                         (boxes[inds], scores[inds, j-1:j])
                     ).astype(np.float32)
-            # # argmax = np.argmax(scores[inds, j-1:j])
-            # # for b,s in zip([boxes[inds][argmax]], [scores[inds, j-1:j][argmax]]):
+            # argmax = np.argmax(scores[inds, j-1:j])
+            # for b,s in zip([boxes[inds][argmax]], [scores[inds, j-1:j][argmax]]):
             # for b in target:
             #     visualize_bbox(myimg, b[:4], str(b[4]), myimg.shape[1], myimg.shape[0],
             #                    color=(0, 0, 255))
             # for b,s in zip(boxes[inds][:], scores[inds, j-1:j][:]):
-            # # for b,s in zip(boxes[inds][:10], scores[inds, j-1:j][:10]):
+            # for b,s in zip(boxes[inds][:10], scores[inds, j-1:j][:10]):
             #     b1 = b.copy()
-            #     b[0], b[2] = b1[0] / myimg.shape[1], b1[2] / myimg.shape[1]
-            #     b[1], b[3] = b1[1] / myimg.shape[0], b1[3] / myimg.shape[0]
+            #     # b[0], b[2] = b1[0] / myimg.shape[1], b1[2] / myimg.shape[1]
+            #     # b[1], b[3] = b1[1] / myimg.shape[0], b1[3] / myimg.shape[0]
             #     visualize_bbox(myimg, b, str(j-1), myimg.shape[1], myimg.shape[0],
             #                    color=(255, 0, 0))
+        # import matplotlib.pyplot as plt
+        # plt.imshow(myimg), plt.show()
         # Image.fromarray(myimg).save(f'vis_debug_{i:03d}.png')
 
     return valid_sets.evaluate_detections(all_boxes, all_thresh=all_thresh,
@@ -291,6 +294,15 @@ def load_dataset(args):
                     double_aug=args.double_aug, is_training=True, task=task
                     )
             valid_sets[task_] = MXSDetection([('2012', 'val')], args.size,
+                    imgset=imgset, cache=False, task=task)
+        elif dataset == "MXT":
+            imgset = "MXE" + imgset
+            from data import MXTDetection
+            train_names = [('2007', 'train'), ('2012', 'train')]
+            train_sets[task_]= MXTDetection(train_names, args.size, imgset=imgset,
+                    double_aug=args.double_aug, is_training=True, task=task
+                    )
+            valid_sets[task_] = MXTDetection([('2012', 'val')], args.size,
                     imgset=imgset, cache=False, task=task)
         else:
             raise NotImplementedError('Unkown dataset {}!'.format(dataset))
