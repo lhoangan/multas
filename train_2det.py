@@ -18,9 +18,6 @@ from train import parse_arguments, load_dataset, preprocess_args
 from train import save_weights, test_model, test_segmentation
 from train import logger, wandb
 
-def parse_arguments_student(parser):
-    pass
-
 if __name__ == '__main__':
 
     parser = parse_arguments()

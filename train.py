@@ -50,11 +50,12 @@ def parse_arguments():
                                 "Cityscapes", "MXE+Cityscapes", "MXE+MXS",
                                  ])
     parser.add_argument('--imgset', default='Main',
-            choices=["Main", "Segmentation",# VOC imgset
-                    "Half", "Half2",        # VOC imgset
-                    "Quarter", "3Quarter",  # VOC imgset
-                    "Eighth","7Eighth",     # VOC imgset
-                    "SegHf", "SegHs",       # VOC imgset
+            choices=["Main", "Segmentation",            # VOC imgset
+                    "Half", "Half2",                    # VOC imgset
+                    "Quarter", "3Quarter",              # VOC imgset
+                    "Eighth","7Eighth", "Ei2ghth",      # VOC imgset
+                    "Eighth+Ei2ghth",                   # VOC imgset
+                    "SegHf", "SegHs",                   # VOC imgset
                     "det", "det2", "seg", "seg2", "all",# MXE imgset
                     "det+seg", "det+seg2", "det2+seg",  # MXE imgset
                     "Potsdam", "Vaihingen",
@@ -183,27 +184,32 @@ def test_model(args, model, priors, valid_sets, all_thresh=True, per_class=False
     return valid_sets.evaluate_detections(all_boxes, all_thresh=all_thresh,
                                           per_class=per_class) * 100
 
-def test_segmentation(model, testset, all_thresh=True, per_class=False):
+def test_segmentation(model, testset, wgt=True, per_class=False):
     logger.info('Evaluating segmentation...')
     model.eval()
     # model.backbone.apply(deactivate_batchnorm)
     num_images = len(testset)
     preds = []
     gts = []
-    batch_size = 5
+    batch_size = 5 # if wgt else 1
     loader = data.DataLoader(testset, batch_size=batch_size, shuffle=False,
             num_workers=5, collate_fn=detection_collate_dict)
     prefetcher = DataPrefetcher(loader)
     for i in range(0, num_images, batch_size):
         with torch.no_grad():
             x, _, seg = prefetcher.next()
+            # if wgt: # not COCO
+            #     x, _, seg = prefetcher.next()
+            # else: # is COCO
+            #     x = torch.from_numpy(testset.pull_image(i)).unsqueeze(0)
             x = x.cuda()
             out = model.forward_test(x, task="seg")
             pred = out['seg'].cpu().numpy().argmax(axis=1)#.squeeze()
             preds.append(pred)
-            gts.append(seg.cpu().numpy().astype(np.int64))#.squeeze())
+            if wgt:
+                gts.append(seg.cpu().numpy().astype(np.int64))#.squeeze())
     preds = np.concatenate(preds, axis=0)
-    gts = np.concatenate(gts, axis=0).squeeze()
+    gts = np.concatenate(gts, axis=0).squeeze() if wgt else []
     logger.info (f"Total: {num_images} | Len of preds: {preds.shape[0]}")
 
     # breakpoint()
@@ -247,7 +253,8 @@ def load_dataset(args):
             train_names = [('2007', 'train'), ('2012', 'train')]
             train_sets[task_]= VOCDetection(train_names, args.size, imgset=imgset,
                     cache=True,
-                    double_aug=args.double_aug, is_training=True, task=task
+                    double_aug=args.double_aug, is_training=True, task=task,
+                                            both_task=("both_task" in args.note)
                     )
             valid_sets[task_] = VOCDetection([('2012', 'val')], args.size,
                     imgset=imgset, cache=False, task=task)
@@ -259,9 +266,11 @@ def load_dataset(args):
             from data import ISPRSDataset
             train_sets[task_] = ISPRSDataset('datasets/isprs/potsdam_od/train.txt',
                         imgset=imgset, batch_size=1, img_size=args.size, task=task,
-                        is_training=True, both_task=("both_task" in args.note))
+                        is_training=True, both_task=("both_task" in args.note),
+                        seg3="seg3" in args.note)
             valid_sets[task_] = ISPRSDataset('datasets/isprs/potsdam_od/test.txt',
-                    imgset=imgset, batch_size=1, img_size=args.size, task=task)
+                    imgset=imgset, batch_size=1, img_size=args.size, task=task,
+                    seg3="seg3" in args.note)
         elif dataset == 'COCO':
             from data import COCODetection
             subset=imgset if imgset!="Main" else None
@@ -326,6 +335,13 @@ if __name__ == '__main__':
                      task=args.task, noBN=args.noBN
         ).cuda()
 
+    eval_det = (lambda *a, **kwa: { k: test_model(*a, **kwa,
+                                                  valid_sets=valid_sets[k])
+        for k in valid_sets if 'det' in k and args.task_weights['det'] > 0 })
+    eval_seg = (lambda *a, **kwa: { k: test_segmentation(*a, **kwa,
+                                                         testset=valid_sets[k])
+        for k in valid_sets if 'seg' in k and args.task_weights['seg'] > 0 })
+
     if args.load_weights:
         state_dict = torch.load(args.load_weights)
         state_dict = state_dict['model'] if 'model' in state_dict else state_dict
@@ -348,10 +364,12 @@ if __name__ == '__main__':
         # precision["seg"] = test_segmentation(model, valid_sets['seg']) \
         #         if 'seg' in valid_sets else 0
         # logger.info('seg mAP={}'.format(precision['seg']))
-        print({k: test_model(args, model, priors.clone().detach(), valid_sets[k])
-                for k in valid_sets if 'det' in k})
-        print({k: test_segmentation(model, valid_sets[k])
-                for k in valid_sets if 'seg' in k})
+        # print({k: test_model(args, model, priors.clone().detach(), valid_sets[k])
+        #         for k in valid_sets if 'det' in k and args.task_weights['det'] > 0})
+        # print({k: test_segmentation(model, valid_sets[k], wgt="COCO" not in args.dataset)
+        #         for k in valid_sets if 'seg' in k and args.task_weights['seg'] > 0})
+        print(eval_det(args, model, priors.clone().detach()))
+        print(eval_seg(model, wgt=("COCO" not in args.dataset)))
 
     logger.info('Loading teacher Network...')
 
@@ -412,6 +430,8 @@ if __name__ == '__main__':
             # prefetcher = {d: DataPrefetcher(rand_loader[d]) for d in rand_loader}
             model.train()
 
+            # if iteration > 0:
+            #     ema_model.update(model)
             if args.eval_epoch and epoch > args.eval_epoch:
                 priors = PriorBox(args.base_anchor_size, args.size, base_size=args.size).cuda()
                 # precision["det"] = test_model(args, ema_model.ema, priors.clone().detach(),
@@ -421,11 +441,14 @@ if __name__ == '__main__':
                 # precision["seg"] = test_segmentation(ema_model.ema, valid_sets['seg']) \
                 #         if 'seg' in valid_sets else 0
                 # logger.info('seg mAP={}'.format(precision['seg']))
-                precision.update(
-                    {k: test_model(args, ema_model.ema, priors.clone().detach(), valid_sets[k])
-                            for k in valid_sets if 'det' in k})
-                precision.update({k: test_segmentation(ema_model.ema, valid_sets[k])
-                            for k in valid_sets if 'seg' in k})
+                # precision.update(
+                #     {k: test_model()
+                #             for k in valid_sets if 'det' in k and args.task_weights['det'] > 0})
+                # precision.update({k: test_segmentation(ema_model.ema, valid_sets[k])
+                #             for k in valid_sets if 'seg' in k and args.task_weights['seg'] > 0})
+                path = save_weights(ema_model.ema, args, '')
+                precision.update(eval_det(args, ema_model.ema, priors.clone().detach()))
+                precision.update(eval_seg(ema_model.ema, wgt=("COCO" not in args.dataset)))
                 [logger.info(f"{k} mAP={precision[k]:.2f}") for k in precision]
 
                 if val(precision) > val(best_maps) + 7e-2:
@@ -558,11 +581,13 @@ if __name__ == '__main__':
     # precision['seg'] = test_segmentation(ema_model.ema, valid_sets['seg']) \
     #         if 'seg' in valid_sets else 0
     # logger.info('seg mAP={}'.format(precision['seg']))
-    precision.update(
-        {k: test_model(args, ema_model.ema, priors.clone().detach(), valid_sets[k])
-                for k in valid_sets if 'det' in k})
-    precision.update({k: test_segmentation(ema_model.ema, valid_sets[k])
-                for k in valid_sets if 'seg' in k})
+    # precision.update(
+    #     {k: test_model(args, ema_model.ema, priors.clone().detach(), valid_sets[k])
+    #             for k in valid_sets if 'det' in k and args.task_weights['det'] > 0})
+    # precision.update({k: test_segmentation(ema_model.ema, valid_sets[k])
+    #             for k in valid_sets if 'seg' in k and args.task_weights['seg'] > 0})
+    precision.update(eval_det(args, ema_model.ema, priors.clone().detach()))
+    precision.update(eval_seg(ema_model.ema, wgt=("COCO" not in args.dataset)))
     [logger.info(f"{k} mAP={precision[k]:.2f}") for k in precision]
 
     if val(precision) > val(best_maps) + 7e-2 or len(mAPs) == 0:
@@ -601,7 +626,9 @@ if __name__ == '__main__':
     #         valid_sets['det'], all_thresh=True) if 'det' in valid_sets else 0
     # precision = test_segmentation(ema_model.ema, valid_sets['seg']) \
     #         if 'seg' in valid_sets else 0
-    print({k: test_model(args, ema_model.ema, priors.clone().detach(),
-            valid_sets[k], per_class=True) for k in valid_sets if 'det' in k})
-    print({k: test_segmentation(ema_model.ema, valid_sets[k], per_class=True)
-                for k in valid_sets if 'seg' in k})
+    # print({k: test_model(args, ema_model.ema, priors.clone().detach(), valid_sets[k],
+    #         per_class=True) for k in valid_sets if 'det' in k and args.task_weights['det'] > 0})
+    # print({k: test_segmentation(ema_model.ema, valid_sets[k], per_class=True)
+    #         for k in valid_sets if 'seg' in k and args.task_weights['seg']> 0})
+    print(eval_det(args, ema_model.ema, priors.clone().detach(), per_class=True))
+    print(eval_seg(ema_model.ema, per_class=True, wgt=("COCO" not in args.dataset)))
