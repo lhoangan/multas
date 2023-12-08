@@ -25,9 +25,22 @@ conda activate bmvc22
 # CUDA_VISIBLE_DEVICES qui contient la liste des GPU logiques actuellement réservé
 export PYTHONPATH=/share/home/leh/anaconda3/envs/bmvc22/lib/python3.9/site-packages/pycocotools/:$PYTHONPATH
 
-extra_params="${@:1}"
+params="${@:1}"
 
 # with mutual + gflocal loss
 export WANDB_MODE=online
 export WANDB_PROJECT=tw_eccv24
-python train_segdet.py  --note both_task ${extra_params}
+
+for kdc in "soft"; do # "hard"; do
+    for kdf in "" "+mse" ; do #"+pdf" "+defeat"; do
+
+        kd=${kdc}${kdf}
+        # ------------------------
+        # TODO: to be removed
+        export WANDB_MODE=offline
+        # TODO: to be changed to sbatch runs/distil.sh
+        # ------------------------
+        python distil.py    --seed 0 --eval_epoch 1 --batch_size 10 \
+                            --kd ${kd} ${params}
+    done
+done

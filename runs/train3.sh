@@ -30,4 +30,6 @@ extra_params="${@:1}"
 # with mutual + gflocal loss
 export WANDB_MODE=online
 export WANDB_PROJECT=tw_eccv24
-python train_segdet.py  --note both_task ${extra_params}
+python train.py ${extra_params} --task_weights 1.0+0.0  ;
+python train.py ${extra_params} --task_weights 0.0+1.0  ;
+python train.py ${extra_params} --task_weights 1.0+1.0  ;

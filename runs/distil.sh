@@ -23,6 +23,7 @@
 conda activate bmvc22
 # Exécution du script habituellement utilisé, on utilise la variable
 # CUDA_VISIBLE_DEVICES qui contient la liste des GPU logiques actuellement réservé
+
 export PYTHONPATH=/share/home/leh/anaconda3/envs/bmvc22/lib/python3.9/site-packages/pycocotools/:$PYTHONPATH
 
 extra_params="${@:1}"
@@ -30,4 +31,4 @@ extra_params="${@:1}"
 # with mutual + gflocal loss
 export WANDB_MODE=online
 export WANDB_PROJECT=tw_eccv24
-python train_segdet.py  --note both_task ${extra_params}
+python distil.py ${extra_params}

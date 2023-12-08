@@ -29,4 +29,5 @@ extra_params="${@:1}"
 
 # with mutual + gflocal loss
 export WANDB_MODE=online
+export WANDB_PROJECT=tw_eccv24
 python train_epoch.py ${extra_params}
