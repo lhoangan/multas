@@ -31,8 +31,8 @@ BOX_COLOR = (255, 0, 0) # Red
 TEXT_COLOR = (255, 255, 255) # White
 def visualize_bbox(img, bbox, class_name, w, h, color=None, thickness=2):
     """Visualizes a single bounding box on the image"""
-    x_min, x_max = (bbox[::2] * w).astype(np.int)
-    y_min, y_max = (bbox[1::2] * h).astype(np.int)
+    x_min, x_max = (bbox[::2] * w).astype(int)
+    y_min, y_max = (bbox[1::2] * h).astype(int)
     palette = VOCDetection.label_palette()
     if color is None:
         color = palette[VOC_CLASSES.index(class_name)].astype(np.uint8).tolist()
@@ -429,7 +429,7 @@ class VOCDetection(data.Dataset):
                 for im_ind, index in enumerate(self.ids):
                     index = index[1]
                     dets = all_boxes[cls_ind][im_ind]
-                    if dets == []:
+                    if dets.size == 0:
                         continue
                     for k in range(dets.shape[0]):
                         f.write('{:s} {:.3f} {:.1f} {:.1f} {:.1f} {:.1f}\n'.
@@ -678,12 +678,12 @@ class VOCDetection(data.Dataset):
         #     with PathManager.open(file_path, "w") as f:
         #         f.write(json.dumps(self._predictions))
 
-        acc = np.full(self.num_classes, np.nan, dtype=np.float)
-        iou = np.full(self.num_classes, np.nan, dtype=np.float)
-        tp = self._conf_matrix.diagonal()[:-1].astype(np.float)
-        pos_gt = np.sum(self._conf_matrix[:-1, :-1], axis=0).astype(np.float)
+        acc = np.full(self.num_classes, np.nan, dtype=np.float64)
+        iou = np.full(self.num_classes, np.nan, dtype=np.float64)
+        tp = self._conf_matrix.diagonal()[:-1].astype(np.float64)
+        pos_gt = np.sum(self._conf_matrix[:-1, :-1], axis=0).astype(np.float64)
         class_weights = pos_gt / np.sum(pos_gt)
-        pos_pred = np.sum(self._conf_matrix[:-1, :-1], axis=1).astype(np.float)
+        pos_pred = np.sum(self._conf_matrix[:-1, :-1], axis=1).astype(np.float64)
         acc_valid = pos_gt > 0
         acc[acc_valid] = tp[acc_valid] / pos_gt[acc_valid]
         union = pos_gt + pos_pred - tp
@@ -695,10 +695,10 @@ class VOCDetection(data.Dataset):
         pacc = np.sum(tp) / np.sum(pos_gt)
 
         if self._compute_boundary_iou:
-            b_iou = np.full(self.num_classes, np.nan, dtype=np.float)
-            b_tp = self._b_conf_matrix.diagonal()[:-1].astype(np.float)
-            b_pos_gt = np.sum(self._b_conf_matrix[:-1, :-1], axis=0).astype(np.float)
-            b_pos_pred = np.sum(self._b_conf_matrix[:-1, :-1], axis=1).astype(np.float)
+            b_iou = np.full(self.num_classes, np.nan, dtype=np.float64)
+            b_tp = self._b_conf_matrix.diagonal()[:-1].astype(np.float64)
+            b_pos_gt = np.sum(self._b_conf_matrix[:-1, :-1], axis=0).astype(np.float64)
+            b_pos_pred = np.sum(self._b_conf_matrix[:-1, :-1], axis=1).astype(np.float64)
             b_union = b_pos_gt + b_pos_pred - b_tp
             b_iou_valid = b_union > 0
             b_iou[b_iou_valid] = b_tp[b_iou_valid] / b_union[b_iou_valid]
