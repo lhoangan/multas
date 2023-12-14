@@ -7,6 +7,17 @@ import random
 import math
 import torch
 
+EP=9 # threshold for each dimension
+
+def good_mask(mask, ignored_class):
+
+    mask = mask.squeeze()
+    xs, ys = np.nonzero((mask != 0) & (mask != ignored_class))
+
+    # not a thorough check, there could be 2 small blobs (< EP) lying far away
+    if len(xs) > 0 and len(ys) > 0:
+        return (xs.max() - xs.min() > EP and ys.max() - ys.min() > EP)
+    return False
 
 def _crop_expand_(
     data: dict, # of np.ndarray
@@ -89,6 +100,11 @@ def _crop_expand_(
                 ] = cropped_image
 
                 cropped[k] = expand_image
+
+            # no objects in gt segmentation
+            if 'mask' in cropped and not good_mask(cropped['mask'], ignored_class):
+                # print ("Retry", mi, mj)
+                continue
 
             if 'boxes' not in data:
                 for k in cropped:
