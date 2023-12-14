@@ -37,8 +37,8 @@ def Detect(
     decoded_boxes=decoded_boxes[keep]
     conf_scores=conf_scores[keep]
 
-    (decoded_boxes, conf_scores) = decoded_boxes.cpu().numpy(), conf_scores.cpu().numpy()
-    return (decoded_boxes, conf_scores)
+    return (decoded_boxes.cpu().numpy(), conf_scores.cpu().numpy())
+    # return (decoded_boxes, conf_scores)
 
 def transfuse(conf_data, loc_data, targets, priors, seggt,
     base_anchor: float,
