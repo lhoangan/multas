@@ -64,10 +64,11 @@ class SegHead(nn.Module):
         # following vedaseg implementation of VOC_FPN segmentation head, at
         # https://github.com/Media-Smart/vedaseg/blob/fa4ff42234176b05ef0dff8759c7e62a17498ab9/configs/voc_fpn.py#L128
         self.seg = nn.Sequential(
-            *([nn.Upsample(scale_factor=4)] +
-            [conv_block(out_chans, classif_dim if i == 2 else out_chans,
-                        kernel_size=3, padding=1).cuda() for i in range(3)] +
-            [classif_block]
+            [nn.Upsample(scale_factor=4),
+            conv_block(out_chans, out_chans, kernel_size=3, padding=1).cuda(),
+            conv_block(out_chans, out_chans, kernel_size=3, padding=1).cuda(),
+            conv_block(out_chans, classif_dim, kernel_size=3, padding=1).cuda(),
+            classif_block]
         ))
         if isinstance(self.seg[-1], nn.Conv2d):
             torch.nn.init.normal_(self.seg[-1].weight, std=0.01)

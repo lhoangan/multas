@@ -1,6 +1,11 @@
 import os, os.path as osp
 import sys
 
+sys.path.insert(0, "/share/home/berg/cocostuffapi/PythonAPI")
+sys.path.insert(0, "/share/home/berg/cocostuffapi/PythonAPI/pycocotools")
+
+assert os.path.exists("/share/home/berg/cocostuffapi/PythonAPI")
+
 import argparse
 import random
 import numpy as np
@@ -387,7 +392,10 @@ if __name__ == '__main__':
 
     params_to_train = tencent_trick(model)
 
-    optimizer = optim.SGD(params_to_train, lr=args.lr,
+    # optimizer = optim.SGD(params_to_train, lr=args.lr,
+    #           momentum=0.9, weight_decay=0.0005)
+    optimizer = geoopt.optim.RiemannianSGD(
+            params_to_train, lr=args.lr,
             momentum=0.9, weight_decay=0.0005)
     scaler = torch.cuda.amp.GradScaler()
 
@@ -530,6 +538,7 @@ if __name__ == '__main__':
                 if "skip_empty" in args.note:
                     if args.task_weights[task[1:]] == 0:
                         continue
+
                 out[task] = model.forward_test(images, task)
 
                 if "det" in task:
@@ -557,7 +566,6 @@ if __name__ == '__main__':
                 k = t[1:] if t[1:] not in ks else t
                 wandb.log({f"{k}/MAP": best_maps[t]}, step=epoch)
                 ks.append(k)
-
 
         optimizer.zero_grad()
         scaler.scale(loss).backward()
