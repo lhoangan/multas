@@ -233,7 +233,6 @@ def pseudo_label_generation(sup, seg_map, point, cls_label, num_classes, sigma, 
 
     return center_map, offset_map, weight_map
 
-
 def merge_gt_pred_segmap(softmax_seg_map, gt_seg_map):
 
     _gt_seg_map = torch.zeros_like(softmax_seg_map)

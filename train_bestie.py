@@ -22,10 +22,61 @@ from train import logger, wandb
 
 
 from utils.bestie import refine_box_generation, center_map_gen, gaussian
+from utils.bestie import box_from_seg
 
 class Struct:
     def __init__(self, **entries):
         self.__dict__.update(entries)
+
+def gen_boxes_from_seg(args, model, x, priors, seggt, vis=False):
+    from data import preproc_for_test
+    model.eval()
+
+    # model inference
+    with torch.no_grad():
+        out = model.forward_test(x)
+
+    # label = torch.stack(label)
+    params = {'refine_thresh': 0.1, 'sigma': 6, 'beta': 3.0, 'kernel': 41 }
+
+    refined = box_from_seg(out['seg'].double(), seggt, Struct(**params))
+
+    if not vis:
+        return refined['targets']
+
+    # visualization
+    std = (.229, .224, .225)
+    mean = (.485, .456, .406)
+    import matplotlib.pyplot as plt
+    import flow_vis
+
+    for b in range(x.shape[0]):
+        from data.voc0712 import visualize_bbox
+        img = ((x[b].detach().cpu().numpy().squeeze().transpose((1,2,0))*std+mean)*255)
+        img = img.astype(np.uint8).copy()
+
+        fig, axs = plt.subplots(2, 2)
+        fig.tight_layout()
+
+        # [0, 0]: predicted boxes
+        pred = img.copy()
+        axs[0, 0].imshow(pred)
+
+        # [1, 0]: pseudo/generated boxes
+        pseudo = img.copy()
+        for box in refined['targets'][b]:
+            visualize_bbox(pseudo, box[:4].cpu().numpy(),
+                           f"{box[-2].item():.0f}/{box[-1].item():.1f}",
+                           pseudo.shape[1], pseudo.shape[0], color=(255, 0, 0))
+        axs[1, 0].imshow(pseudo)
+
+        axs[0, 1].imshow(out['seg'][b].max(0)[1].detach().cpu().numpy())
+
+        gt_seg_map = seggt[b].cpu()
+        gt_seg_map[gt_seg_map == 255] = 0
+        axs[1, 1].imshow(gt_seg_map.cpu().numpy().squeeze()), plt.show()
+
+    return refined['targets']
 
 def gen_pseudo_boxes(args, model, x, priors, seggt, vis=False):
     from utils import Detect
@@ -380,12 +431,15 @@ if __name__ == '__main__':
 
                     # TODO: adding weak detection loss
                     ## generating targets
-                    if False: #iteration % epoch_size == 0:
-                        targets_ = gen_pseudo_boxes(args, ema_model.ema, images,
-                                                    priors, seggt, vis=True)
+                    vis = ('with_vis' in args.note) and (iteration % epoch_size == 0)
+                    if 'use_gt' in args.note:
+                        targets_ = targets
+                    elif 'seg_only' in args.note:
+                        targets_ = gen_boxes_from_seg(args, ema_model.ema, images,
+                                                    priors, seggt, vis=vis)
                     else:
                         targets_ = gen_pseudo_boxes(args, ema_model.ema, images,
-                                                    priors, seggt)
+                                                    priors, seggt, vis=vis)
                     ## computing loss
                     try:
                         mk = torch.Tensor([len(t) > 0 for t in targets_])
