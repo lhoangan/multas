@@ -5,6 +5,10 @@ import math
 import torch
 import torch.nn as nn
 from models.base_blocks import BasicConv
+import numpy as np
+
+from .hyp_mlr import HorosphericalLayer, PoincareProjector
+
 
 class SegHead(nn.Module):
     """
@@ -18,11 +22,15 @@ class SegHead(nn.Module):
         backbone_channels: list,
         conv_block: nn.Module=BasicConv,
         out_chans: int=128,
+        classif_block_type: str = "conv1x1", # or horospherical
     ) -> tuple:
         super(SegHead, self).__init__()
 
+        classif_dim = 3
+
         self.conv = list()
         channels =  [fea_channel]*fpn_level
+
         fpn_level = len(channels)
         # f = factor, 1st fpn_level, f=0 -> factor = (2^1)x upsampling
         for f in range(fpn_level):
@@ -36,14 +44,33 @@ class SegHead(nn.Module):
         # then element-wise sum of all fpn levels
         self.conv = nn.ModuleList(self.conv)
 
+        classif_block_type = "conv1x1" # "horospherical"
+        print(f">> classif block type = {classif_block_type}")
+
+        proto_types = "uniform"
+        protos_path = f"prototypes/prototypes{proto_types}-{classif_dim}d-{num_classes+1}c.npy"
+        classif_block = (
+            nn.Conv2d(classif_dim, num_classes+1, kernel_size=1, stride=1, padding=0, bias=False)
+            if classif_block_type == "conv1x1"
+            else
+            nn.Sequential(
+                PoincareProjector(),
+                HorosphericalLayer(
+                    lambda_=0.1 * out_chans,
+                    protos=torch.from_numpy(np.load(protos_path))),
+            )
+        )
+
         # following vedaseg implementation of VOC_FPN segmentation head, at
         # https://github.com/Media-Smart/vedaseg/blob/fa4ff42234176b05ef0dff8759c7e62a17498ab9/configs/voc_fpn.py#L128
         self.seg = nn.Sequential(
             *([nn.Upsample(scale_factor=4)] +
-            [conv_block(out_chans, out_chans, kernel_size=3, padding=1).cuda() for i in range(3)] +
-            [nn.Conv2d(out_chans, num_classes+1, kernel_size=1, stride=1, padding=0, bias=False)]
+            [conv_block(out_chans, classif_dim if i == 2 else out_chans,
+                        kernel_size=3, padding=1).cuda() for i in range(3)] +
+            [classif_block]
         ))
-        torch.nn.init.normal_(self.seg[-1].weight, std=0.01)
+        if isinstance(self.seg[-1], nn.Conv2d):
+            torch.nn.init.normal_(self.seg[-1].weight, std=0.01)
 
     def forward(self, fp, base_size):#, extra=None):
 
