@@ -165,7 +165,7 @@ class HorosphericalLayer(nn.Module):
         =======
             logits: torch.Tensor - size (b,p,w,h)
         """
-        x = expmap0_feature_map(self.ball, x)
+        # x = expmap0_feature_map(self.ball, x)
         return pairwise_busemann(
             self.protos,
             self.bias,

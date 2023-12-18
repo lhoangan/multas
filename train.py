@@ -14,6 +14,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
 import torch.utils.data as data
+import geoopt
 from data import detection_collate_dict, DataPrefetcher, preproc_for_test
 from utils import Detect
 from utils import PriorBox
