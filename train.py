@@ -393,11 +393,15 @@ if __name__ == '__main__':
 
     params_to_train = tencent_trick(model)
 
-    # optimizer = optim.SGD(params_to_train, lr=args.lr,
-    #           momentum=0.9, weight_decay=0.0005)
-    optimizer = geoopt.optim.RiemannianSGD(
-            params_to_train, lr=args.lr,
-            momentum=0.9, weight_decay=0.0005)
+
+    classif_block_type = os.getenv("CLASSIF_BLOCK_TYPE", "conv1x1") # "horospherical"
+    if classif_block_type in ("horospherical", "hyperbolic"):
+        optimizer = geoopt.optim.RiemannianSGD(
+                params_to_train, lr=args.lr,
+                momentum=0.9, weight_decay=0.0005)
+    else:
+        optimizer = optim.SGD(params_to_train, lr=args.lr,
+                  momentum=0.9, weight_decay=0.0005)
     scaler = torch.cuda.amp.GradScaler()
 
     ema_model = ModelEMA(model)

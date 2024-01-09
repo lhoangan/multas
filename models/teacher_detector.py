@@ -45,10 +45,14 @@ class SegHead(nn.Module):
         # then element-wise sum of all fpn levels
         self.conv = nn.ModuleList(self.conv)
 
+        proto_types = os.getenv("CLASSIF_PROTOTYPES", "uniform")
         classif_block_type = os.getenv("CLASSIF_BLOCK_TYPE", "conv1x1") # "horospherical"
-        print(f">> classif block type = {classif_block_type} in dimensions d={classif_dim}")
 
-        proto_types = "uniform"
+        if classif_block_type == "horospherical":
+            print(f">> classif block type = {classif_block_type} in dimensions d={classif_dim} with prototypes = {proto_types}")
+        else:
+            print(f">> classif block type = {classif_block_type} in dimensions d={classif_dim}")
+
         protos_path = f"prototypes/prototypes{proto_types}-{classif_dim}d-{num_classes+1}c.npy"
         classif_block = (
             nn.Conv2d(classif_dim, num_classes+1, kernel_size=1, stride=1, padding=0, bias=False)

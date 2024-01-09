@@ -130,7 +130,7 @@ class VOCDetection(data.Dataset):
         task: str="det",
         both_task: bool=False,
     ) -> None:
-        self.root = os.path.join('datasets/', 'VOCdevkit/')
+        self.root = os.path.join('/share/projects/semmacape/', 'VOCdevkit/')
         self.results_file_prefix = dt.now().strftime("%Y%m%d_%H%M%S.%f")
         self.now = dt.now().strftime("%Y%m%d_%H%M%S.%f")
         self.image_set = image_sets
