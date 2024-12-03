@@ -1,10 +1,12 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+import os
 import math
 import torch
 import torch.nn as nn
 from models.base_blocks import BasicConv
+import numpy as np
 
 class SegHead(nn.Module):
     """
@@ -138,8 +140,39 @@ class Detector_base(nn.Module):
             self.backbone_channels = (1024, 2048) # resnet101's thing
             self.fea_channel = 256
             self.conv_block = BasicConv
+        elif "swin" in backbone:
+            from models.backbone.swin_backbone import SwinTransformerBackbone
+            embed_dim = 96
+            depths = [2, 2, 18, 2]
+            num_heads = [3, 6, 12, 24]
+            version = "S"
+            self.backbone_channels = (192, 384, 768)
+            if backbone == 'swinT':
+                depths = [2, 2, 6, 2] # [2, 2, 18, 2]
+                version = "T"
+            elif backbone == 'swinS':
+                pass
+            elif backbone == 'swinB':
+                embed_dim = 128
+                num_heads = [4, 8, 16, 32]
+                version = "B"
+                self.backbone_channels = (256, 512, 1024)
+            elif backbone == 'swinL':
+                embed_dim = 192
+                num_heads = [6, 12, 24, 48]
+                version = "L"
+                self.backbone_channels = (384, 768, 1536)
+            else:
+                raise ValueError(f"Error: Sorry {backbone} is not supported")
+
+            self.backbone = SwinTransformerBackbone(embed_dim=embed_dim,
+                                                    depths=depths,
+                                                    num_heads=num_heads,
+                                                    version=version)
+            self.fea_channel = 256
+            self.conv_block = BasicConv
         else:
-            raise ValueError('Error: Sorry backbone {} is not supported!'.format(backbone))
+            raise ValueError(f'Error: Sorry backbone {backbone} is not supported!')
 
         # Neck network
         if neck == 'ssd':

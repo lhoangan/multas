@@ -33,27 +33,30 @@ def parse_arguments():
     parser.add_argument('--job_type', default="teacher", type=str)
 
     parser.add_argument('--seed', default=None, type=int)
-    parser.add_argument('--neck', default='fpn')
-    parser.add_argument('--backbone', default='resnet18')
+    parser.add_argument('--backbone', default='resnet18',
+                        choices=["resnet18", "resnet50", "resnet101",
+                                 "swinT", "swinS", "swinB", "swinL"]
+                        )
+    parser.add_argument('--neck', default='fpn', choices=["fpn", "pafpn"])
     parser.add_argument('--dataset', default='VOC',
                         choices=["VOC",  "VOCaug", "MXE", "ISPRS", "COCO", "MXS",
                                 "Cityscapes", "MXE+Cityscapes", "MXE+MXS",
                                  "MXE+MXT", "CNES"
                                  ])
     parser.add_argument('--imgset', default='Main',
-            choices=["Main", "Segmentation",            # VOC imgset
-                    "Half", "Half2",                    # VOC imgset
-                    "Quarter", "3Quarter",              # VOC imgset
-                    "Eighth","7Eighth", "Ei2ghth",      # VOC imgset
-                    "Eighth+Ei2ghth",                   # VOC imgset
-                    "SegHf", "SegHs",                   # VOC imgset
-                    "det", "det2", "seg", "seg2", "all",# MXE imgset
-                    "det+seg", "det+seg2", "det2+seg",  # MXE imgset
-                    "Potsdam", "Vaihingen",
-                    "Potsdam+Vaihingen", "Vaihingen+Potsdam",
-                    "P1+P2", "P2+P1", "P1+Vaihingen", "P2+Vaihingen",
-                    "Eighth+Eighth",
-                ])
+                        choices=["Main", "Segmentation",             # VOC imgset
+                                 "Half", "Half2",                    # VOC imgset
+                                 "Quarter", "3Quarter",              # VOC imgset
+                                 "Eighth","7Eighth", "Ei2ghth",      # VOC imgset
+                                 "Eighth+Ei2ghth",                   # VOC imgset
+                                 "SegHf", "SegHs",                   # VOC imgset
+                                 "det", "det2", "seg", "seg2", "all",# MXE imgset
+                                 "det+seg", "det+seg2", "det2+seg",  # MXE imgset
+                                 "Potsdam", "Vaihingen",
+                                 "Potsdam+Vaihingen", "Vaihingen+Potsdam",
+                                 "P1+P2", "P2+P1", "P1+Vaihingen", "P2+Vaihingen",
+                                 "Eighth+Eighth",                    # COCO imgset
+                        ])
     parser.add_argument('--save_folder', default='weights/')
     parser.add_argument('--match', default='iou', choices=['iou', 'mg'])
     parser.add_argument('--conf_loss', default='fc', choices=['gfc', 'fc'])
