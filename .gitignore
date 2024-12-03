@@ -5,3 +5,4 @@ __pycache__/*
 !datasets/
 datasets/*
 !datasets/imgsetVOC
+!datasets/subsetsCOCO

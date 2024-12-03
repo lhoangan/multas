@@ -241,7 +241,7 @@ def load_dataset(args):
             train_sets[task_] = COCODetection([('2017', 'train')], args.size,
                                              cache=False, is_training=True,
                                              subset=subset, task=task,
-                                            pseudo_seg=("pse-msk" in args.note),
+                                             pseudo_seg=("pse-msk" in args.note),
                                             )
             valid_sets[task_] = COCODetection([('2017', 'val')], args.size,
                                               is_training=False,

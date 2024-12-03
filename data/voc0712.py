@@ -519,7 +519,6 @@ class VOCDetection(data.Dataset):
         cachedir = os.path.join(self.root, 'annotations_cache', self.now)
         # The PASCAL VOC metric changed in 2010
         use_07_metric = True if int(self._year) < 2010 else False
-        # print('VOC07 metric? ' + ('Yes' if use_07_metric else 'No'))
 
         # processing each image in the list
         im = self.ids[im_ind][1]
@@ -548,11 +547,9 @@ class VOCDetection(data.Dataset):
                             dets[k, 0] + 1, dets[k, 1] + 1,
                             dets[k, 2] + 1, dets[k, 3] + 1))
                     output = True
-
             if not output:
                 continue
-
-            rec, prec, ap = voc_eval(filename, annopath, fn, cls,
+            _, _, ap = voc_eval(filename, annopath, fn, cls,
                     cachedir, ovthresh=thresh, use_07_metric=use_07_metric)
             aps += [ap]
 
