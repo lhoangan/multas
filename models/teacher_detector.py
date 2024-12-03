@@ -192,12 +192,20 @@ class Detector_base(nn.Module):
         self,
         x: torch.Tensor,
     ) -> dict:
+        base_size = x.size(2)
         x = self.backbone(x)
         fp = self.neck(x) if self.neck is not None else x
         fea = list()
         loc = list()
         conf = list()
-        if 'det' in self.task:
+        results = dict()
+        if 'seg' in self.task:
+            results['seg'] = self.seghead(fp, base_size)#, extra=[x2, x1])
+            fea = [x.permute(0, 2, 3, 1).contiguous() for x in fp]
+            fea = torch.cat([o.view(o.size(0), -1) for o in fea], 1)
+            results['feature'] = fea.view(fea.size(0), -1, self.fea_channel)
+            return results
+        elif 'det' in self.task:
             for (x, l, c) in zip(fp, self.loc, self.conf):
                 fea.append(x.permute(0, 2, 3, 1).contiguous())
                 loc.append(l(x).permute(0, 2, 3, 1).contiguous())

@@ -7,6 +7,17 @@ import random
 import math
 import torch
 
+EP=9 # threshold for each dimension
+
+def good_mask(mask, ignored_class):
+
+    mask = mask.squeeze()
+    xs, ys = np.nonzero((mask != 0) & (mask != ignored_class))
+
+    # not a thorough check, there could be 2 small blobs (< EP) lying far away
+    if len(xs) > 0 and len(ys) > 0:
+        return (xs.max() - xs.min() > EP and ys.max() - ys.min() > EP)
+    return False
 
 def _crop_expand_(
     data: dict, # of np.ndarray
@@ -20,7 +31,7 @@ def _crop_expand_(
     max_iou: float = 0.25,
     max_try: int = 10,
     img_mean: float = 114.0,
-    ignored_class:int=255,
+    ignored_class:int=0,
     p: float = 0.75,
 ) -> dict: # of np.ndarray
 
@@ -40,7 +51,7 @@ def _crop_expand_(
     assert height == width
 
     depths = {'image': depth, 'mask': 1}
-    default_vals = {'image': img_mean, 'mask': 0}#ignored_class}
+    default_vals = {'image': img_mean, 'mask': ignored_class}
 
     for _ in range(max_try):
         new_h = random.uniform(min_scale, max_scale)
@@ -89,6 +100,11 @@ def _crop_expand_(
                 ] = cropped_image
 
                 cropped[k] = expand_image
+
+            # no objects in gt segmentation
+            if 'mask' in cropped and not good_mask(cropped['mask'], ignored_class):
+                # print ("Retry", mi, mj)
+                continue
 
             if 'boxes' not in data:
                 for k in cropped:
@@ -211,7 +227,7 @@ def preproc_for_test_(
     resample = {'image': cv2.INTER_LINEAR, 'mask': cv2.INTER_NEAREST}
     types    = {'image': np.float32, 'mask': np.int64}
     for k in resample:
-        if k not in data:
+        if k not in data or insize == 0:
             continue
         data[k] = cv2.resize(data[k], (insize, insize), interpolation=resample[k])
 
@@ -244,6 +260,7 @@ def preproc_for_train_(
     insize: int,
     task: str = 'det',
     no_augment: bool=False, # when we don't want to do augmentation
+    ignored_class: int = 0,
 ) -> tuple:
     # data['image'], data['mask'], and data['bboxes']
 
@@ -260,7 +277,7 @@ def preproc_for_train_(
                 if len(output['mask'].shape) == 2 else output['mask']
 
     output['image'] = _distort(output['image'])
-    _crop_expand_(output)   # inline changing
+    _crop_expand_(output, ignored_class=ignored_class)   # inline changing
     _mirror_(output)            # inline changing
     return output
 

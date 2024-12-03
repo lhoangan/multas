@@ -4,9 +4,9 @@ import torch
 import torch.backends.cudnn as cudnn
 from utils import PriorBox
 
-from train import parse_arguments, load_dataset, preprocess_args
-from train import test_model, test_segmentation
-from train import logger
+from utils.train import parse_arguments, load_dataset, preprocess_args
+from utils.train import test_model, test_segmentation
+from utils.train import logger
 
 
 if __name__ == '__main__':

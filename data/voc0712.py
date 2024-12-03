@@ -10,11 +10,9 @@ from PIL import Image
 import cv2
 import numpy as np
 from .voc_eval import voc_eval
-# from .data_augment import preproc_for_train, preproc_for_test
 from .data_augment import preproc_for_train_, preproc_for_test_
 import xml.etree.ElementTree as ET
 from datetime import datetime as dt
-import albumentations as A
 
 import json
 from utils import xyxy_to_xywh
@@ -31,26 +29,23 @@ BOX_COLOR = (255, 0, 0) # Red
 TEXT_COLOR = (255, 255, 255) # White
 def visualize_bbox(img, bbox, class_name, w, h, color=None, thickness=2):
     """Visualizes a single bounding box on the image"""
-    x_min, x_max = (bbox[::2] * w).astype(np.int)
-    y_min, y_max = (bbox[1::2] * h).astype(np.int)
+    x_min, x_max = (bbox[::2] * w).astype(int)
+    y_min, y_max = (bbox[1::2] * h).astype(int)
     palette = VOCDetection.label_palette()
     if color is None:
         color = palette[VOC_CLASSES.index(class_name)].astype(np.uint8).tolist()
 
-    cv2.rectangle(img, (x_min, y_min), (x_max, y_max), color=color, thickness=thickness)
+    cv2.rectangle(
+        img, (x_min, y_min), (x_max, y_max), color=color, thickness=thickness)
 
-    ((text_width, text_height), _) = cv2.getTextSize(class_name, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)
+    ((text_width, text_height), _) = cv2.getTextSize(
+        class_name, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)
     cv2.rectangle(img, (x_min, y_min - int(1.3 * text_height)),
             (x_min + text_width, y_min), color, -1)
-    cv2.putText(
-        img,
-        text=class_name,
-        org=(x_min, y_min - int(0.3 * text_height)),
-        fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-        fontScale=0.35,
-        color=TEXT_COLOR,
-        lineType=cv2.LINE_AA,
-    )
+    cv2.putText(img, text=class_name,
+                org=(x_min, y_min - int(0.3 * text_height)),
+                fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.35,
+                color=TEXT_COLOR, lineType=cv2.LINE_AA,)
     return img
 
 def build_from_module(cfg, module, default_args=None):
@@ -83,7 +78,8 @@ class AnnotationTransform(object):
     """ Transforms a VOC annotation into a Tensor of bbox  """
 
     def __init__(self, keep_difficult=True, classes=VOC_CLASSES, cl2ind=None):
-        self.cl2ind = dict(zip(classes, range(len(classes)))) if cl2ind is None else cl2ind
+        self.cl2ind = dict(zip(classes, range(len(classes)))) \
+            if cl2ind is None else cl2ind
         self.keep_difficult = keep_difficult
 
     def __call__(self, target):
@@ -128,14 +124,18 @@ class VOCDetection(data.Dataset):
         ignore_label: int = 255,
         is_training: bool = False,
         task: str="det",
+        both_task: bool=False,
+        pseudo_seg: bool = False,
     ) -> None:
-        self.root = os.path.join('datasets/', 'VOCdevkit/')
+        self.root = os.path.join('datasets', 'VOCdevkit/')
         self.results_file_prefix = dt.now().strftime("%Y%m%d_%H%M%S.%f")
         self.now = dt.now().strftime("%Y%m%d_%H%M%S.%f")
         self.image_set = image_sets
         self.imgset = imgset
         self.size = size
-        self.task = task
+        self.both_task = both_task
+        self.pseudo_seg = pseudo_seg
+        self.task = task if not both_task else "det+seg"
         self.ignore_label = ignore_label
         self.is_training = is_training
         self.double_aug = double_aug
@@ -157,8 +157,8 @@ class VOCDetection(data.Dataset):
         for (year, name) in image_sets:
             self._year = year
             rootpath = os.path.join(self.root, 'VOC' + year)
-            for line in open(osp.join(rootpath, 'ImageSets', self.imgset, name + '.txt')):
-                self.ids.append((rootpath, line.strip()))
+            for l in open(osp.join(rootpath,'ImageSets',self.imgset,name+'.txt')):
+                self.ids.append((rootpath, l.strip()))
         self.anno_rootpath = os.path.join(self.root, 'VOC' + self._year)
 
     def pull_classes(
@@ -173,15 +173,24 @@ class VOCDetection(data.Dataset):
     ) -> list:
         data = dict()
         data['image'] = self.pull_image(index, resize=True)
-        if 'det' in self.task: # == 'det':
+        if 'det' in self.task and 'seg' not in self.task: # == 'det':
             data['bboxes'] = self.pull_anno(index)
+            if self.pseudo_seg:
+                data['mask'] = self.pull_pseudo_segment(index, resize=True)
         if 'seg' in self.task: # == 'seg': # TODO: elif or if?
             data['bboxes'] = self.pull_anno(index)
-            data['mask'] = self.pull_segment(index, resize=True)
+            mask = self.pull_segment(index, resize=True)
+            if mask is not None:
+                data['mask'] = mask
+            else:
+                # if it's a single-task dataset, raise Exception
+                assert self.task!="seg", "Loading seg failed! File not exists!"
 
         if self.is_training:
-            data1 = preproc_for_train_(data, self.size)
-            data2 = preproc_for_train_(data, self.size)
+            data1 = preproc_for_train_(data, self.size,
+                                       ignored_class=self.ignore_label)
+            data2 = preproc_for_train_(data, self.size,
+                                       ignored_class=self.ignore_label)
             data = data1
         data = preproc_for_test_(data, self.size)
         if self.double_aug and self.is_training:
@@ -200,13 +209,31 @@ class VOCDetection(data.Dataset):
     ) -> int:
         return len(self.ids)
 
+    def pull_pseudo_segment(
+        self,
+        index: int,
+        resize: bool = False,
+    ) -> np.ndarray:
+        img_id = self.ids[index]
+        pseudo_path = self._seggtpath.replace("SegmentationClass",
+                                              "SegmentationClassAug_MGGC")
+        image = Image.open(pseudo_path % img_id)
+        if resize:
+            image = image.resize((self.size, self.size), resample=Image.NEAREST)
+        image = np.array(image)
+        return image
+
     def pull_segment(
         self,
         index: int,
         resize: bool = False,
     ) -> np.ndarray:
         img_id = self.ids[index]
-        image = Image.open(self._seggtpath % img_id)
+        if not osp.exists(self._seggtpath % img_id):
+            image = Image.fromarray(np.zeros((self.size, self.size)) +
+                self.ignore_label)
+        else:
+            image = Image.open(self._seggtpath % img_id)
         if resize:
             image = image.resize((self.size, self.size), resample=Image.NEAREST)
         image = np.array(image)
@@ -248,31 +275,30 @@ class VOCDetection(data.Dataset):
             id = i
             r, g, b = 0, 0, 0
             for j in range(7):
-                r = r | (bitget(id, 0) << (7-j))#bitor(r, bitshift(bitget(id,1),7 - j));
-                g = g | (bitget(id, 1) << (7-j))#bitor(g, bitshift(bitget(id,2),7 - j));
-                b = b | (bitget(id, 2) << (7-j))#bitor(b, bitshift(bitget(id,3),7 - j));
-                id = id >> 3                    #bitshift(id,-3);
+                r = r | (bitget(id, 0) << (7-j))
+                g = g | (bitget(id, 1) << (7-j))
+                b = b | (bitget(id, 2) << (7-j))
+                id = id >> 3
             palette[i] = np.array([r, g, b])
         return palette
 
     @staticmethod
-    def vis_seg(gts, preds):
+    def vis_seg(gts, preds, vis_dir="vis_tbd"):
         # Visualization and output
         palette = VOCDetection.label_palette().flatten().tolist()
         from PIL import Image
-        os.makedirs("out_tbd", exist_ok=True)
+        os.makedirs(vis_dir, exist_ok=True)
         for i, (gt, pred) in enumerate(zip(gts, preds)):
             mask = (gt > 0)
             pred = pred * mask
-            # .resize(gt.size, resample=Image.NEAREST)
-            gt = Image.fromarray(gt, mode='P')
+            gt = Image.fromarray(gt.astype(np.uint8), mode='P')
             pr = Image.fromarray(pred.astype(np.uint8), mode='P')
             gt.putpalette(palette)
             pr.putpalette(palette)
             mosaic = Image.new('RGB', (gt.width + pr.width + 10, gt.height))
             mosaic.paste(gt, (0, 0))
             mosaic.paste(pr, (gt.width + 10, 0))
-            mosaic.save(f"out_tbd/{i:03d}.png")
+            mosaic.save(f"{vis_dir}/{i:04d}.png")
 
     def _cache_images(
         self,
@@ -314,12 +340,14 @@ class VOCDetection(data.Dataset):
         self,
         all_boxes: list,
         all_thresh=True,
-        per_class=False
+        per_class=False,
+        output_coco=False
     ) -> float:
         output_dir = os.path.join(self.root, 'eval')
         os.makedirs(output_dir, exist_ok=True)
         self._write_voc_results_file(all_boxes)
-        # self._write_coco_bbox_results_file(all_boxes)
+        if output_coco:
+            self._write_coco_bbox_results_file(all_boxes)
         results = []
         results_ = {}
         if all_thresh:
@@ -380,10 +408,6 @@ class VOCDetection(data.Dataset):
 
     def _coco_bbox_results_one_category(self, boxes, cat_id):
         results = []
-        # image_ids = self.COCO.getImgIds() # TODO: ??
-        # image_ids.sort()
-        # assert len(boxes) == len(image_ids)
-        # for i, image_id in enumerate(image_ids):
         for i, image_id in enumerate(self.ids):
             # like index in _write_voc_results_file, but comparing to
             # https://s3.amazonaws.com/images.cocodataset.org/external/external_PASCAL_VOC.zip
@@ -419,7 +443,7 @@ class VOCDetection(data.Dataset):
                 for im_ind, index in enumerate(self.ids):
                     index = index[1]
                     dets = all_boxes[cls_ind][im_ind]
-                    if dets == []:
+                    if dets.size == 0:
                         continue
                     for k in range(dets.shape[0]):
                         f.write('{:s} {:.3f} {:.1f} {:.1f} {:.1f} {:.1f}\n'.
@@ -585,7 +609,7 @@ class VOCDetection(data.Dataset):
         if output_dir is not None and not os.path.isdir(output_dir):
             os.mkdir(output_dir)
         outputs = {'rec':[],'ap':[],'prec':[],'tp':[],'fp1':[],'fp2':[],'ovd':[]}
-        for i, cls in enumerate(self.pull_classes()):
+        for _, cls in enumerate(self.pull_classes()):
 
             if cls == '__background__':
                 continue
@@ -610,6 +634,16 @@ class VOCDetection(data.Dataset):
             preds: list of 2D numpy arrays or 3D logits (class dimension = 0)
             gts: list of 2D numpy arrays
         """
+
+        # reshape back to GT size
+        all_segs = []
+        all_gts = []
+        for i, pred in enumerate(preds):
+            gt = self.pull_segment(i, resize=False)
+            all_gts.append(gt)
+            all_segs.append(np.array(Image.fromarray(pred.astype(np.uint8)).resize(
+                    (gt.shape[1], gt.shape[0]), resample=Image.NEAREST)))
+
         self._conf_matrix = np.zeros((self.num_classes+1, self.num_classes+1),
                 dtype=np.int64)
         self._b_conf_matrix = np.zeros((self.num_classes+1, self.num_classes+1),
@@ -649,20 +683,12 @@ class VOCDetection(data.Dataset):
         * Mean pixel accuracy averaged across classes (mACC)
         * Pixel Accuracy (pACC)
         """
-
-        # # TODO: logistics, skipped for now
-        # if self._output_dir:
-        #     PathManager.mkdirs(self._output_dir)
-        #     file_path = os.path.join(self._output_dir, "sem_seg_predictions.json")
-        #     with PathManager.open(file_path, "w") as f:
-        #         f.write(json.dumps(self._predictions))
-
-        acc = np.full(self.num_classes, np.nan, dtype=np.float)
-        iou = np.full(self.num_classes, np.nan, dtype=np.float)
-        tp = self._conf_matrix.diagonal()[:-1].astype(np.float)
-        pos_gt = np.sum(self._conf_matrix[:-1, :-1], axis=0).astype(np.float)
+        acc = np.full(self.num_classes, np.nan, dtype=np.float64)
+        iou = np.full(self.num_classes, np.nan, dtype=np.float64)
+        tp = self._conf_matrix.diagonal()[:-1].astype(np.float64)
+        pos_gt = np.sum(self._conf_matrix[:-1, :-1], axis=0).astype(np.float64)
         class_weights = pos_gt / np.sum(pos_gt)
-        pos_pred = np.sum(self._conf_matrix[:-1, :-1], axis=1).astype(np.float)
+        pos_pred = np.sum(self._conf_matrix[:-1, :-1], axis=1).astype(np.float64)
         acc_valid = pos_gt > 0
         acc[acc_valid] = tp[acc_valid] / pos_gt[acc_valid]
         union = pos_gt + pos_pred - tp
@@ -674,10 +700,12 @@ class VOCDetection(data.Dataset):
         pacc = np.sum(tp) / np.sum(pos_gt)
 
         if self._compute_boundary_iou:
-            b_iou = np.full(self.num_classes, np.nan, dtype=np.float)
-            b_tp = self._b_conf_matrix.diagonal()[:-1].astype(np.float)
-            b_pos_gt = np.sum(self._b_conf_matrix[:-1, :-1], axis=0).astype(np.float)
-            b_pos_pred = np.sum(self._b_conf_matrix[:-1, :-1], axis=1).astype(np.float)
+            b_iou = np.full(self.num_classes, np.nan, dtype=np.float64)
+            b_tp = self._b_conf_matrix.diagonal()[:-1].astype(np.float64)
+            b_pos_gt = np.sum(self._b_conf_matrix[:-1, :-1],
+                              axis=0).astype(np.float64)
+            b_pos_pred = np.sum(self._b_conf_matrix[:-1, :-1],
+                                axis=1).astype(np.float64)
             b_union = b_pos_gt + b_pos_pred - b_tp
             b_iou_valid = b_union > 0
             b_iou[b_iou_valid] = b_tp[b_iou_valid] / b_union[b_iou_valid]
@@ -698,12 +726,6 @@ class VOCDetection(data.Dataset):
             if per_class:
                 print (f"Class {name}: {100 * acc[i]}%")
 
-        # # TODO: logistics, skipped for now
-        # if self._output_dir:
-        #     file_path = os.path.join(self._output_dir, "sem_seg_evaluation.pth")
-        #     with PathManager.open(file_path, "wb") as f:
-        #         torch.save(res, f)
-        # results = OrderedDict({"sem_seg": res})
         return res
 
     def _mask_to_boundary(self, mask: np.ndarray, dilation_ratio=0.02):
@@ -713,8 +735,10 @@ class VOCDetection(data.Dataset):
         dilation = max(1, int(round(dilation_ratio * diag_len)))
         kernel = np.ones((3, 3), dtype=np.uint8)
 
-        padded_mask = cv2.copyMakeBorder(mask, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
-        eroded_mask_with_padding = cv2.erode(padded_mask, kernel, iterations=dilation)
+        padded_mask = cv2.copyMakeBorder(mask, 1, 1, 1, 1, cv2.BORDER_CONSTANT,
+                                         value=0)
+        eroded_mask_with_padding = cv2.erode(padded_mask, kernel,
+                                             iterations=dilation)
         eroded_mask = eroded_mask_with_padding[1:-1, 1:-1]
         boundary = mask - eroded_mask
         return boundary
@@ -744,97 +768,3 @@ if __name__ == "__main__":
     plt.imshow(imgs[1]), plt.figure(), plt.imshow(seggt[1]), plt.figure()
     plt.imshow(imgs[1]), plt.imshow(seggt[1], alpha=.5)
     plt.show()
-
-    # -------------
-    # loading with albumentation
-    train_sets = [('2012', 'train')]
-    dataset = VOCDetection(train_sets, 320, imgset='Segmentation',
-            cache=True, double_aug=False, is_training=True,
-            ignore_label=255, task='det+seg')
-    output = dataset.__getitem__(0)
-
-    # visualization
-    for bbox_cat in output['bboxes']:
-        visualize_bbox(output['image'], np.array(bbox_cat[:4]), str(bbox_cat[-1]),
-                (255, 0, 0), output['image'].shape[1], output['image'].shape[0])
-
-    seg_= Image.fromarray(output['mask'].astype(np.uint8), mode="P")
-    seg_.putpalette(VOCDetection.label_palette())
-    plt.imshow(output['image']), plt.figure(), plt.imshow(seg_),
-    # plt.figure(), plt.imshow(output['mask'])
-    plt.show()
-
-
-    index = 0
-    img = dataset.pull_image(index, resize=True)
-    seg = dataset.pull_segment(index, resize=True)
-
-    img_norm_cfg = dict(
-        max_pixel_value=255.0,
-        std=(0.229, 0.224, 0.225),
-        mean=(0.485, 0.456, 0.406),
-    )
-    ignore_label = 255
-    crop_size_h, crop_size_w = 513, 513
-    test_size_h, test_size_w = 513, 513
-    image_pad_value = (123.675, 116.280, 103.530)
-
-    transforms = [
-        dict(type='RandomScale', scale_limit=(0.5, 2),
-             interpolation=cv2.INTER_LINEAR),
-        dict(type='PadIfNeeded', min_height=crop_size_h,
-            min_width=crop_size_w, value=image_pad_value,
-            mask_value=ignore_label, border_mode=0),
-        dict(type='RandomCrop', height=crop_size_h, width=crop_size_w),
-        dict(type='Rotate', limit=10, interpolation=cv2.INTER_LINEAR,
-            border_mode=0, value=image_pad_value,
-            mask_value=ignore_label, p=0.5),
-        dict(type='GaussianBlur', blur_limit=7, p=0.5),
-        dict(type='HorizontalFlip', p=0.5),
-        dict(type='RandomBrightnessContrast', p=0.3),
-        dict(type='RGBShift', r_shift_limit=30, g_shift_limit=30,
-            b_shift_limit=30, p=0.3),
-        dict(type='RandomBrightnessContrast', p=.5),
-        dict(type='RandomGamma', p=.5),
-        dict(type='CLAHE', p=.5),
-        # dict(type='Normalize', **img_norm_cfg),
-        # dict(type='ToTensorV2'),
-    ]
-
-    img_id = dataset.ids[index]
-    img = cv2.imread(dataset._imgpath % img_id, cv2.IMREAD_COLOR)
-    box = dataset.target_transform(ET.parse(dataset._annopath % img_id).getroot())
-    seg = np.array(Image.open(dataset._seggtpath % img_id))
-    seg_= Image.fromarray(seg, mode="P")
-    seg_.putpalette(VOCDetection.label_palette())
-
-    # visualize original data
-    img_ = img.copy()
-    for bbox_cat in box:
-        visualize_bbox(img_, bbox_cat[:4], str(bbox_cat[-1]), (255, 0, 0),
-                img_.shape[1], img_.shape[0])
-    plt.imshow(img_), plt.figure(), plt.imshow(seg_),  plt.show()
-
-    modules = []
-    for t in transforms:
-        modules.append(build_from_module(t, A))
-    aug = A.Compose(modules,
-            # additional_targets={'bbox': 'bboxes'},
-            bbox_params=A.BboxParams(format='albumentations'
-                #, min_area=1024, min_visibility=0.1, label_fields=['class_labels']
-            )
-        )
-
-    for i in range(1):
-        # augmentation
-        output = aug(image=img, mask=seg, bboxes=box)
-        # visualization
-        for bbox_cat in output['bboxes']:
-            visualize_bbox(output['image'], np.array(bbox_cat[:4]), str(bbox_cat[-1]),
-                    (255, 0, 0), output['image'].shape[1], output['image'].shape[0])
-
-        seg_= Image.fromarray(output['mask'], mode="P")
-        seg_.putpalette(VOCDetection.label_palette())
-        plt.imshow(output['image']), plt.figure(), plt.imshow(seg_),
-        # plt.figure(), plt.imshow(output['mask'])
-        plt.show()
